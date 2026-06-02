@@ -35,3 +35,9 @@ java p26x08.EvalTester
 java p26x08.Trainer
 
 ```
+
+#### 🧠 動的評価関数のパラメータ学習（新機能）
+動的評価AIのパラメータ（重み）を最適化するための学習プログラムを実行します。
+
+```bash
+java p26x08.Trainer2
