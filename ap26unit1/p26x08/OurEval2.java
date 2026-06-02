@@ -10,17 +10,28 @@ public class OurEval2 {
 
     private static final float CORNER_WEIGHT = 50.00f;
     
-    // モビリティ（合法手数の差）にかける重み
-    private static final float MOBILITY_WEIGHT = 15.0f;
+    // 8方向ベクトル
+    private static final int[] DIR_R = {-1, -1, -1, 0, 0, 1, 1, 1};
+    private static final int[] DIR_C = {-1, 0, 1, -1, 1, -1, 0, 1};
 
+    // --- 動的評価（モビリティ）の学習パラメータ ---
+    public float earlyMobilityWeight;
+    public float midMobilityWeight;
+    public int earlyPhaseThreshold;
+    public int midPhaseThreshold;
+
+    // デフォルト（前回の手動設定値）
     public OurEval2() {
-        // 先ほど5次元に圧縮した最適化済みの重み
-        float[] initBase = {
-            -14.29f, 11.80f,
-            -40.00f, -4.25f,
-             5.00f
-        };
-        init(initBase);
+        this(new float[]{ -14.29f, 11.80f, -40.00f, -4.25f, 5.00f }, 8.0f, 3.0f, 20, 12);
+    }
+
+    // 学習用のコンストラクタ
+    public OurEval2(float[] baseWeights, float earlyMw, float midMw, int earlyTh, int midTh) {
+        init(baseWeights);
+        this.earlyMobilityWeight = earlyMw;
+        this.midMobilityWeight = midMw;
+        this.earlyPhaseThreshold = earlyTh;
+        this.midPhaseThreshold = midTh;
     }
 
     private void init(float[] base) {
@@ -34,7 +45,6 @@ public class OurEval2 {
                     mappedR = mappedC;
                     mappedC = temp;
                 }
-                
                 if (mappedR == 0 && mappedC == 0) {
                     weights[r * 6 + c] = CORNER_WEIGHT;
                 } else {
@@ -48,26 +58,93 @@ public class OurEval2 {
         }
     }
 
-    public float value(Board board) {
-        if (board.isEnd()) {
-            return 1_000_000 * board.score();
-        }
-
-        // 1. 位置の重みによる評価（静的評価）
-        float positionScore = 0;
-        for (int k = 0; k < LENGTH; k++) {
-            Color c = board.get(k);
-            if (c == Color.BLACK || c == Color.WHITE) {
-                positionScore += weights[k] * c.getValue();
+    public void initializeForBoard(Board initialBoard) {
+        init(this.baseWeights); 
+        for (int r = 0; r < 6; r++) {
+            for (int c = 0; c < 6; c++) {
+                int idx = r * 6 + c;
+                Color color = initialBoard.get(idx);
+                if (color != null && color != Color.BLACK && color != Color.WHITE && color != Color.NONE) {
+                    weights[idx] = 0.0f; 
+                    for (int d = 0; d < 8; d++) {
+                        int nr = r + DIR_R[d];
+                        int nc = c + DIR_C[d];
+                        if (nr >= 0 && nr < 6 && nc >= 0 && nc < 6) {
+                            int nIdx = nr * 6 + nc;
+                            if (weights[nIdx] < 0) {
+                                weights[nIdx] = Math.abs(weights[nIdx]) * 0.5f; 
+                            }
+                        }
+                    }
+                }
             }
         }
+    }
 
-        // 2. モビリティ（着手可能手数）による評価（動的評価）
-        int blackMobility = board.findLegalMoves(Color.BLACK).size();
-        int whiteMobility = board.findLegalMoves(Color.WHITE).size();
+    public float value(Board board) {
+        if (board.isEnd()) {
+            int score = board.score();
+            if (score >= 10) score = 10;
+            if (score <= -10) score = -10;
+            return score * 100_000.0f;
+        }
+
+        float positionScore = 0;
+        int emptyCount = 0;
         
-        float mobilityScore = (blackMobility - whiteMobility) * MOBILITY_WEIGHT;
+        for (int k = 0; k < LENGTH; k++) {
+            Color c = board.get(k);
+            if (c == Color.BLACK) positionScore += weights[k];
+            else if (c == Color.WHITE) positionScore -= weights[k];
+            else if (c == Color.NONE) emptyCount++;
+        }
 
-        return positionScore + mobilityScore;
+        // --- 動的評価パラメータの適用 ---
+        float mobilityWeight = 0.0f;
+        if (emptyCount > earlyPhaseThreshold) {
+            mobilityWeight = earlyMobilityWeight;
+        } else if (emptyCount > midPhaseThreshold) {
+            mobilityWeight = midMobilityWeight;
+        }
+
+        if (mobilityWeight > 0.0f) {
+            int blackMobility = countMobility(board, Color.BLACK);
+            int whiteMobility = countMobility(board, Color.WHITE);
+            positionScore += (blackMobility - whiteMobility) * mobilityWeight;
+        }
+
+        return positionScore;
+    }
+
+    private int countMobility(Board board, Color myColor) {
+        int count = 0;
+        Color oppColor = (myColor == Color.BLACK) ? Color.WHITE : Color.BLACK;
+        for (int r = 0; r < 6; r++) {
+            for (int c = 0; c < 6; c++) {
+                if (board.get(r * 6 + c) == Color.NONE) {
+                    if (canPlace(board, r, c, myColor, oppColor)) count++;
+                }
+            }
+        }
+        return count;
+    }
+
+    private boolean canPlace(Board board, int r, int c, Color myColor, Color oppColor) {
+        for (int d = 0; d < 8; d++) {
+            int nr = r + DIR_R[d];
+            int nc = c + DIR_C[d];
+            boolean foundOpp = false;
+            while (nr >= 0 && nr < 6 && nc >= 0 && nc < 6) {
+                Color color = board.get(nr * 6 + nc);
+                if (color == oppColor) foundOpp = true;
+                else if (color == myColor) {
+                    if (foundOpp) return true;
+                    break;
+                } else break; 
+                nr += DIR_R[d];
+                nc += DIR_C[d];
+            }
+        }
+        return false;
     }
 }

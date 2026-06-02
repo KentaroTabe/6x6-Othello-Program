@@ -12,12 +12,42 @@ public class OurPlayer2 extends Player {
     private long currentMoveTimeLimit;
     private int nodeCount = 0;
     private static final long MAX_GAME_TIME_MS = 58_000;
+    
+    private static final long[][] ZOBRIST = new long[Board.LENGTH][2];
+    static {
+        Random rnd = new Random(2026);
+        for (int i = 0; i < Board.LENGTH; i++) {
+            ZOBRIST[i][0] = rnd.nextLong(); 
+            ZOBRIST[i][1] = rnd.nextLong(); 
+        }
+    }
+    
+    private static final int TT_SIZE = 1 << 20; 
+    private static final int TT_MASK = TT_SIZE - 1;
+    private long[] ttHash = new long[TT_SIZE];
+    private int[] ttDepth = new int[TT_SIZE];
+    private float[] ttValue = new float[TT_SIZE];
+    private byte[] ttFlag = new byte[TT_SIZE];
+    private int[] ttMove = new int[TT_SIZE];
 
     private static class TimeoutException extends Exception {}
 
     public OurPlayer2(Color color) {
+        this(color, new OurEval2()); // デフォルトの評価関数を使用
+    }
+
+    public OurPlayer2(Color color, OurEval2 eval) {
         super("08_Mobility", color); 
-        this.eval = new OurEval2();
+        this.eval = eval;
+    }
+
+    @Override
+    public void setBoard(Board board) {
+        this.eval.initializeForBoard(board);
+        this.totalConsumedTime = 0;
+        this.lastEmptyCount = 36;
+        this.ttHash = new long[TT_SIZE];
+        this.ttFlag = new byte[TT_SIZE];
     }
 
     @Override
@@ -35,38 +65,35 @@ public class OurPlayer2 extends Player {
             if (board.get(k) == Color.NONE) emptyCount++;
         }
         
-        if (emptyCount >= lastEmptyCount || emptyCount >= 32) {
-            totalConsumedTime = 0;
-        }
-        lastEmptyCount = emptyCount;
-
-        int myRemainingTurns = Math.max(1, emptyCount / 2);
         long timeLeft = MAX_GAME_TIME_MS - totalConsumedTime;
-        if (timeLeft < 500) timeLeft = 500;
+        if (timeLeft < 500) timeLeft = 500; 
 
-        currentMoveTimeLimit = (timeLeft / myRemainingTurns) + 1000;
-        if (currentMoveTimeLimit > timeLeft - 500) {
-            currentMoveTimeLimit = Math.max(100, timeLeft - 500);
+        boolean isEndgame = (emptyCount <= 14);
+        
+        if (isEndgame) {
+            currentMoveTimeLimit = timeLeft - 200; 
+        } else {
+            int myRemainingTurns = Math.max(1, emptyCount / 2);
+            currentMoveTimeLimit = (timeLeft / myRemainingTurns) + 1000;
+            if (currentMoveTimeLimit > timeLeft - 500) {
+                currentMoveTimeLimit = Math.max(100, timeLeft - 500);
+            }
         }
 
         Board searchBoard = getColor() == Color.BLACK ? board.clone() : board.flipped();
         List<Move> searchMoves = new ArrayList<>(searchBoard.findLegalMoves(Color.BLACK));
         
-        // ★ 追加: 同スコア時のランダム選択を実現するためのシャッフル
-        Collections.shuffle(searchMoves);
-        
         Move bestMove = searchMoves.get(0).colored(getColor());
+        int maxDepth = 64;
 
-        for (int depth = 1; depth <= 64; depth++) {
+        for (int depth = 1; depth <= maxDepth; depth++) {
             try {
                 Move currentBestSearchMove = null;
                 float alpha = Float.NEGATIVE_INFINITY;
                 float beta = Float.POSITIVE_INFINITY;
                 
                 Move prevBest = bestMove.colored(Color.BLACK);
-                if (searchMoves.remove(prevBest)) {
-                    searchMoves.add(0, prevBest);
-                }
+                sortMoves(searchMoves, prevBest);
 
                 for (Move move : searchMoves) {
                     Board nextBoard = searchBoard.placed(move);
@@ -80,8 +107,13 @@ public class OurPlayer2 extends Player {
                 if (currentBestSearchMove != null) {
                     bestMove = currentBestSearchMove.colored(getColor());
                 }
+                
+                if (isEndgame && (alpha >= 100000.0f || alpha <= -100000.0f)) {
+                    break; 
+                }
+
             } catch (TimeoutException e) {
-                break;
+                break; 
             }
         }
 
@@ -95,43 +127,141 @@ public class OurPlayer2 extends Player {
         checkTime();
         if (board.isEnd() || depth == 0) return eval.value(board);
 
-        List<Move> moves = board.findLegalMoves(Color.BLACK);
-        if (moves.isEmpty() || moves.get(0).isPass()) {
-            Board nextBoard = board.placed(Move.ofPass(Color.BLACK));
-            return minSearch(nextBoard, alpha, beta, depth - 1);
+        long hash = getHash(board, true);
+        int index = (int) (hash & TT_MASK);
+        int bestMoveIndex = -1;
+
+        if (ttFlag[index] != 0 && ttHash[index] == hash) {
+            bestMoveIndex = ttMove[index]; 
+            if (ttDepth[index] >= depth) {
+                float val = ttValue[index];
+                if (ttFlag[index] == 1) return val;
+                if (ttFlag[index] == 2 && val >= beta) return val;
+                if (ttFlag[index] == 3 && val <= alpha) return val;
+            }
         }
 
+        float alphaOrig = alpha;
+        List<Move> moves = new ArrayList<>(board.findLegalMoves(Color.BLACK));
+        if (moves.isEmpty() || moves.get(0).isPass()) {
+            Board nextBoard = board.placed(Move.ofPass(Color.BLACK));
+            float val = minSearch(nextBoard, alpha, beta, depth - 1);
+            storeTT(hash, depth, val, alphaOrig, beta, null);
+            return val;
+        }
+
+        Move ttBestMove = null;
+        for(Move m : moves) {
+            if(m.getIndex() == bestMoveIndex) { ttBestMove = m; break; }
+        }
+        sortMoves(moves, ttBestMove);
+
+        float bestVal = Float.NEGATIVE_INFINITY;
+        Move currentBestMove = null;
         for (Move move : moves) {
             Board nextBoard = board.placed(move);
             float val = minSearch(nextBoard, alpha, beta, depth - 1);
-            alpha = Math.max(alpha, val);
+            if (val > bestVal) {
+                bestVal = val;
+                currentBestMove = move;
+            }
+            alpha = Math.max(alpha, bestVal);
             if (alpha >= beta) break;
         }
-        return alpha;
+        
+        storeTT(hash, depth, bestVal, alphaOrig, beta, currentBestMove);
+        return bestVal;
     }
 
     private float minSearch(Board board, float alpha, float beta, int depth) throws TimeoutException {
         checkTime();
         if (board.isEnd() || depth == 0) return eval.value(board);
 
-        List<Move> moves = board.findLegalMoves(Color.WHITE);
-        if (moves.isEmpty() || moves.get(0).isPass()) {
-            Board nextBoard = board.placed(Move.ofPass(Color.WHITE));
-            return maxSearch(nextBoard, alpha, beta, depth - 1);
+        long hash = getHash(board, false);
+        int index = (int) (hash & TT_MASK);
+        int bestMoveIndex = -1;
+
+        if (ttFlag[index] != 0 && ttHash[index] == hash) {
+            bestMoveIndex = ttMove[index];
+            if (ttDepth[index] >= depth) {
+                float val = ttValue[index];
+                if (ttFlag[index] == 1) return val;
+                if (ttFlag[index] == 2 && val >= beta) return val;
+                if (ttFlag[index] == 3 && val <= alpha) return val;
+            }
         }
 
+        float betaOrig = beta;
+        List<Move> moves = new ArrayList<>(board.findLegalMoves(Color.WHITE));
+        if (moves.isEmpty() || moves.get(0).isPass()) {
+            Board nextBoard = board.placed(Move.ofPass(Color.WHITE));
+            float val = maxSearch(nextBoard, alpha, beta, depth - 1);
+            storeTT(hash, depth, val, alpha, betaOrig, null);
+            return val;
+        }
+        
+        Move ttBestMove = null;
+        for(Move m : moves) {
+            if(m.getIndex() == bestMoveIndex) { ttBestMove = m; break; }
+        }
+        sortMoves(moves, ttBestMove);
+
+        float bestVal = Float.POSITIVE_INFINITY;
+        Move currentBestMove = null;
         for (Move move : moves) {
             Board nextBoard = board.placed(move);
             float val = maxSearch(nextBoard, alpha, beta, depth - 1);
-            beta = Math.min(beta, val);
+            if (val < bestVal) {
+                bestVal = val;
+                currentBestMove = move;
+            }
+            beta = Math.min(beta, bestVal);
             if (alpha >= beta) break;
         }
-        return beta;
+        
+        storeTT(hash, depth, bestVal, alpha, betaOrig, currentBestMove);
+        return bestVal;
+    }
+
+    private void sortMoves(List<Move> moves, Move bestMove) {
+        moves.sort((m1, m2) -> {
+            if (bestMove != null) {
+                if (m1.equals(bestMove)) return -1;
+                if (m2.equals(bestMove)) return 1;
+            }
+            float score1 = eval.weights[m1.getIndex()];
+            float score2 = eval.weights[m2.getIndex()];
+            return Float.compare(score2, score1);
+        });
+    }
+
+    private void storeTT(long hash, int depth, float val, float alphaOrig, float beta, Move bestMove) {
+        int index = (int) (hash & TT_MASK);
+        byte flag = 1; 
+        if (val <= alphaOrig) flag = 3;      
+        else if (val >= beta) flag = 2; 
+        
+        ttHash[index] = hash;
+        ttDepth[index] = depth;
+        ttValue[index] = val;
+        ttFlag[index] = flag;
+        ttMove[index] = (bestMove != null) ? bestMove.getIndex() : -1;
+    }
+
+    private long getHash(Board board, boolean isBlackTurn) {
+        long hash = 0;
+        for (int i = 0; i < Board.LENGTH; i++) {
+            Color c = board.get(i);
+            if (c == Color.BLACK) hash ^= ZOBRIST[i][0];
+            else if (c == Color.WHITE) hash ^= ZOBRIST[i][1];
+        }
+        if (!isBlackTurn) hash ^= 0x123456789ABCDEFL;
+        return hash;
     }
 
     private void checkTime() throws TimeoutException {
         nodeCount++;
-        if ((nodeCount & 1023) == 0) {
+        if ((nodeCount & 4095) == 0) { 
             if (System.currentTimeMillis() - currentMoveStartTime > currentMoveTimeLimit) {
                 throw new TimeoutException();
             }
