@@ -20,18 +20,41 @@ public class OurEval2 {
     public int earlyPhaseThreshold;
     public int midPhaseThreshold;
 
-    // デフォルト（前回の手動設定値）
+    // --- 変形盤（BLOCK）対応の学習パラメータ ---
+    public float blockOrthogonalMult; 
+    public float blockDiagonalMult;   
+
+    // デフォルト値（ベースラインとなる初期値）
     public OurEval2() {
-        this(new float[]{ -14.29f, 11.80f, -40.00f, -4.25f, 5.00f }, 8.0f, 3.0f, 20, 12);
+        this(
+            new float[]{ -14.29f, 11.80f, -40.00f, -4.25f, 5.00f }, 
+            8.0f, 3.0f, 20, 12, 
+            -0.8f, -0.4f
+        );
     }
 
-    // 学習用のコンストラクタ
-    public OurEval2(float[] baseWeights, float earlyMw, float midMw, int earlyTh, int midTh) {
-        init(baseWeights);
+    // 全パラメータを受け取るコンストラクタ（進化戦略用）
+    public OurEval2(float[] baseWeights, float earlyMw, float midMw, int earlyTh, int midTh, float blockOrthoMult, float blockDiagMult) {
         this.earlyMobilityWeight = earlyMw;
         this.midMobilityWeight = midMw;
         this.earlyPhaseThreshold = earlyTh;
         this.midPhaseThreshold = midTh;
+        this.blockOrthogonalMult = blockOrthoMult;
+        this.blockDiagonalMult = blockDiagMult;
+        init(baseWeights);
+    }
+
+    // ディープコピーメソッド（突然変異生成用）
+    public OurEval2 copy() {
+        return new OurEval2(
+            this.baseWeights.clone(),
+            this.earlyMobilityWeight,
+            this.midMobilityWeight,
+            this.earlyPhaseThreshold,
+            this.midPhaseThreshold,
+            this.blockOrthogonalMult,
+            this.blockDiagonalMult
+        );
     }
 
     private void init(float[] base) {
@@ -64,7 +87,26 @@ public class OurEval2 {
             for (int c = 0; c < 6; c++) {
                 int idx = r * 6 + c;
                 Color color = initialBoard.get(idx);
-                if (color != null && color != Color.BLACK && color != Color.WHITE && color != Color.NONE) {
+                
+                if (color == Color.BLOCK) {
+                    weights[idx] = 0.0f; 
+                    
+                    for (int d = 0; d < 8; d++) {
+                        int nr = r + DIR_R[d];
+                        int nc = c + DIR_C[d];
+                        if (nr >= 0 && nr < 6 && nc >= 0 && nc < 6) {
+                            int nIdx = nr * 6 + nc;
+                            boolean isOrthogonal = (DIR_R[d] == 0 || DIR_C[d] == 0);
+                            float mult = isOrthogonal ? blockOrthogonalMult : blockDiagonalMult;
+                            
+                            if (weights[nIdx] < 0) {
+                                weights[nIdx] = weights[nIdx] * mult;
+                            } else {
+                                weights[nIdx] = weights[nIdx] * Math.abs(mult); 
+                            }
+                        }
+                    }
+                } else if (color != Color.BLACK && color != Color.WHITE && color != Color.NONE) {
                     weights[idx] = 0.0f; 
                     for (int d = 0; d < 8; d++) {
                         int nr = r + DIR_R[d];
@@ -99,7 +141,6 @@ public class OurEval2 {
             else if (c == Color.NONE) emptyCount++;
         }
 
-        // --- 動的評価パラメータの適用 ---
         float mobilityWeight = 0.0f;
         if (emptyCount > earlyPhaseThreshold) {
             mobilityWeight = earlyMobilityWeight;

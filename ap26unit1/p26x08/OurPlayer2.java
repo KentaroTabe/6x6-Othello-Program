@@ -7,11 +7,12 @@ public class OurPlayer2 extends Player {
     private OurEval2 eval;
     
     private long totalConsumedTime = 0;
-    private int lastEmptyCount = 36;
     private long currentMoveStartTime;
     private long currentMoveTimeLimit;
     private int nodeCount = 0;
-    private static final long MAX_GAME_TIME_MS = 58_000;
+    
+    // 学習時や状況に応じて制限時間を変更できるようにインスタンス変数化（大会ルールは60秒=60000ms。バッファ込で58秒）
+    private long maxGameTimeMs = 58_000;
     
     private static final long[][] ZOBRIST = new long[Board.LENGTH][2];
     static {
@@ -33,19 +34,24 @@ public class OurPlayer2 extends Player {
     private static class TimeoutException extends Exception {}
 
     public OurPlayer2(Color color) {
-        this(color, new OurEval2()); // デフォルトの評価関数を使用
+        this(color, new OurEval2(), 58_000); 
     }
 
     public OurPlayer2(Color color, OurEval2 eval) {
+        this(color, eval, 58_000); 
+    }
+
+    // 進化戦略の高速学習用（早指し）コンストラクタ
+    public OurPlayer2(Color color, OurEval2 eval, long maxGameTimeMs) {
         super("08_Mobility", color); 
         this.eval = eval;
+        this.maxGameTimeMs = maxGameTimeMs;
     }
 
     @Override
     public void setBoard(Board board) {
         this.eval.initializeForBoard(board);
         this.totalConsumedTime = 0;
-        this.lastEmptyCount = 36;
         this.ttHash = new long[TT_SIZE];
         this.ttFlag = new byte[TT_SIZE];
     }
@@ -65,18 +71,31 @@ public class OurPlayer2 extends Player {
             if (board.get(k) == Color.NONE) emptyCount++;
         }
         
-        long timeLeft = MAX_GAME_TIME_MS - totalConsumedTime;
+        long timeLeft = maxGameTimeMs - totalConsumedTime;
         if (timeLeft < 500) timeLeft = 500; 
 
         boolean isEndgame = (emptyCount <= 14);
         
+        // 持ち時間を限界まで使うアグレッシブな時間配分
         if (isEndgame) {
-            currentMoveTimeLimit = timeLeft - 200; 
+            // 終盤は残り時間をギリギリまで使う
+            currentMoveTimeLimit = timeLeft - (maxGameTimeMs < 10000 ? 50 : 100); 
         } else {
+            // 残り手番数の見積もり
             int myRemainingTurns = Math.max(1, emptyCount / 2);
-            currentMoveTimeLimit = (timeLeft / myRemainingTurns) + 1000;
-            if (currentMoveTimeLimit > timeLeft - 500) {
-                currentMoveTimeLimit = Math.max(100, timeLeft - 500);
+            
+            // 均等割りではなく、1.5倍の係数をかけて深読みを優先する（時間を前借りするイメージ）
+            currentMoveTimeLimit = (long) ((timeLeft / (double) myRemainingTurns) * 1.5);
+            
+            // ただし、1手で残り時間の40%以上を使わないようセーフティをかける
+            long maxAllowed = (long) (timeLeft * 0.4); 
+            if (currentMoveTimeLimit > maxAllowed) {
+                currentMoveTimeLimit = maxAllowed;
+            }
+            
+            // 制限時間が長ければ最低保証時間を設定
+            if (maxGameTimeMs >= 50000 && currentMoveTimeLimit < 1500) {
+                currentMoveTimeLimit = Math.min(1500, timeLeft - 500);
             }
         }
 
