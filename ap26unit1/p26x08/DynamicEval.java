@@ -107,9 +107,9 @@ public class DynamicEval {
    * 上から順に序盤手、中盤手、終盤手
    */
   static final float[][] W = {
-    {1,3,-3,-3,3},
-    {1,9,-9,3,-3},
-    {1,6,-10,8,-5}
+    {1,3,-3,-3,3,-4,4},
+    {1,9,-9,3,-3,-4,4},
+    {1,6,-10,8,-5,0,0}
   };
 
   /**
@@ -125,13 +125,17 @@ public class DynamicEval {
    * @return 評価値。終局時は ±1,000,000 ×（黒石数−白石数）。
    *         非終局時はマス重みの線形和。
    */
+  
   public float value(Board board) {
     if (board.isEnd()) {
       // 確実に勝てる手順を最優先するため、大きな係数で増幅。
       return 1_000_000 * board.score();
     }
 
-    if(thefirst) blockArrange(board);
+    if(thefirst){
+      blockArrange(board);
+      thefirst=false;
+    }
     int part;
     int countHands = board.count(BLACK)+board.count(WHITE);
     if(countHands<firstLine) part=0;
@@ -143,7 +147,9 @@ public class DynamicEval {
         + board.findLegalMoves(BLACK).size() * W[part][1]
         + board.findLegalMoves(WHITE).size() * W[part][2]
         + board.count(BLACK) * W[part][3]
-        + board.count(WHITE) * W[part][4];
+        + board.count(WHITE) * W[part][4]
+        + relationValue.countFrontier(board,BLACK) * W[part][5]
+        + relationValue.countFrontier(board,WHITE) * W[part][6];
   }
 
   /** 1 マス分の評価値。黒石なら +M[r][c]、白石なら -M[r][c]、空マスは 0。*/

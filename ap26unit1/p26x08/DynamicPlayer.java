@@ -76,7 +76,7 @@ public class DynamicPlayer extends ap26.Player {
 
   /** デフォルトコンストラクタ。深さ 2 で構築。*/
   public DynamicPlayer(Color color) {
-    this(MY_NAME, color, new DynamicEval(), 6);
+    this(MY_NAME, color, new DynamicEval(), 7);
   }
 
   /** 全パラメータを明示するコンストラクタ。*/
