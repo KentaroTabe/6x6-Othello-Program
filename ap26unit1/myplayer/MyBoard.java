@@ -111,7 +111,7 @@ public class MyBoard implements Board, Cloneable {
     return moves;
   }
 
-  List<Integer> findNoPassLegalIndexes(Color color) {
+  public List<Integer> findNoPassLegalIndexes(Color color) {
     var moves = new ArrayList<Integer>();
     for (int k = 0; k < LENGTH; k++) {
       var c = this.board[k];

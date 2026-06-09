@@ -76,6 +76,22 @@ public class DynamicEval {
       { 50, 5, 10, 10, 5, 50 },
     }
   };
+  float [][][] MC = new float[3][6][6];
+  void addMC(float dif,int k){
+    int row = k / SIZE;
+    int col = k % SIZE;
+    for(int i=0;i<3;i++) MC[i][row][col] += dif;
+  }
+  boolean thefirst = true;
+
+  public DynamicEval(){
+    for(int i=0;i<3;i++){
+      for(int j=0;j<6;j++){
+        for(int k=0;k<6;k++) MC[i][j][k] = M[i][j][k];
+      }
+    }
+    thefirst = true;
+  }
 
   static final float[][] N = {
     {50,-16.2f,19.72f,19.72f,-16.2f,50},
@@ -91,9 +107,9 @@ public class DynamicEval {
    * 上から順に序盤手、中盤手、終盤手
    */
   static final float[][] W = {
-    {1,4,-2,-1,3},
-    {1,3,-4,1,1},
-    {1,4,-2,8,-5}
+    {1,3,-3,-3,3},
+    {1,9,-9,3,-3},
+    {1,6,-10,8,-5}
   };
 
   /**
@@ -115,6 +131,7 @@ public class DynamicEval {
       return 1_000_000 * board.score();
     }
 
+    if(thefirst) blockArrange(board);
     int part;
     int countHands = board.count(BLACK)+board.count(WHITE);
     if(countHands<firstLine) part=0;
@@ -133,7 +150,24 @@ public class DynamicEval {
   float cellScore(Board board, int k, int part) {
     int row = k / SIZE;
     int col = k % SIZE;
-    //return M[1][row][col] * board.get(k).getValue();
-    return N[row][col] * board.get(k).getValue();
+    return MC[1][row][col] * board.get(k).getValue();
+    //return N[row][col] * board.get(k).getValue();
   }
+
+  void blockArrange(Board board){
+    for(int k=0;k<6;k++){
+      if(board.get(k)==BLOCK){
+        if(k==0){addMC(40,k+1);addMC(40,k+6);}
+        else if(k==5){addMC(40,k-1);addMC(40,k+6);}
+        else{addMC(40,k+1);addMC(40,k-1);addMC(10,k+6);}
+      }
+    }
+    for(int k=6;k<Board.LENGTH;k+=6){
+      if(board.get(k)==BLOCK){
+        if(k==30){addMC(40,k+1);addMC(40,k-6);}
+        else{addMC(40,k+6);addMC(40,k-6);addMC(10,k+1);}
+      }
+    }
+  }
+  
 }
