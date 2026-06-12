@@ -225,8 +225,38 @@ public class DynamicPlayer extends ap26.Player {
    * α-β カットを最大化する並び替えを入れる。
    */
   List<Move> order(List<Move> moves) {
-    List<Move> shuffled = new ArrayList<>(moves);
-    Collections.shuffle(shuffled);
-    return shuffled;
+    List<Move> sorted = new ArrayList<>(moves);
+
+    // マスの優先度（静的評価値）に基づいて降順（大きい順）にソートする
+    // m2 の優先度から m1 の優先度を比較することで降順になる
+    sorted.sort((m1, m2) -> Integer.compare(getMovePriority(m2), getMovePriority(m1)));
+
+    return sorted;
+  }
+  
+  /**
+   * 着手マスの優先度を返すヘルパーメソッド。
+   * 6x6盤面における簡易的な静的評価値。角を最大、角の斜め内側(Xマス)を最小とする。
+   */
+  int getMovePriority(Move move) {
+    if (move.isPass()) {
+        return 0;
+    }
+
+    int k = move.getIndex();
+    
+    // 6x6 用の優先度テーブル (1次元配列でアクセスを高速化)
+    // 評価関数(DynamicEval)の重みと似ているが、探索順序を決めるだけの
+    // 大雑把な値で十分機能する。
+    int[] PRIORITY = {
+       100, -20,  10,  10, -20, 100,
+       -20, -50,  -5,  -5, -50, -20,
+        10,  -5,   0,   0,  -5,  10,
+        10,  -5,   0,   0,  -5,  10,
+       -20, -50,  -5,  -5, -50, -20,
+       100, -20,  10,  10, -20, 100
+    };
+    
+    return PRIORITY[k];
   }
 }
