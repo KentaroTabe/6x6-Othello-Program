@@ -8,7 +8,9 @@ import ap26.Move;
 import java.util.ArrayList;
 import java.util.Collections;
 import java.util.List;
+import java.util.Random;
 import myplayer.MyBoard;
+import myplayer.MyEval;
 
 /**
  * α-β 法で次の一手を決めるオセロプレイヤー。
@@ -59,6 +61,28 @@ import myplayer.MyBoard;
  */
 public class DynamicPlayer extends ap26.Player {
 
+  private static final long[][] ZOBRIST = new long[Board.LENGTH][2];
+    static {
+        Random rnd = new Random(2026);
+        for (int i = 0; i < Board.LENGTH; i++) {
+            ZOBRIST[i][0] = rnd.nextLong(); 
+            ZOBRIST[i][1] = rnd.nextLong(); 
+        }
+    }
+  
+  private static final int TT_SIZE = 1 << 20; 
+  private static final int TT_MASK = TT_SIZE - 1;
+  private float[] ttValue = new float[TT_SIZE];
+
+  private long totalConsumedTime = 0;
+  private long currentMoveStartTime;
+  private long currentMoveTimeLimit;
+  private int nodeCount = 0;
+    
+  // 学習時や状況に応じて制限時間を変更できるようにインスタンス変数化（大会ルールは60秒=60000ms。バッファ込で58秒）
+  private long maxGameTimeMs = 58_000;
+  private static class TimeoutException extends Exception {}
+  
   /** デフォルトのプレイヤー名（リーグ戦で識別用）。*/
   static final String MY_NAME = "DI24";
 
@@ -85,6 +109,7 @@ public class DynamicPlayer extends ap26.Player {
     this.eval = eval;
     this.depthLimit = depthLimit;
     this.board = new MyBoard();
+    this.ttValue = new float[TT_SIZE];
   }
 
   /** 名前と深さを指定するコンストラクタ（評価関数はデフォルト）。*/
@@ -123,11 +148,35 @@ public class DynamicPlayer extends ap26.Player {
   public Move think(Board board) {
     // 1. 相手の直前手を反映
     this.board = this.board.placed(board.getMove());
+    currentMoveStartTime = System.currentTimeMillis();
+    nodeCount = 0;
+    int emptyCount = 0;
+        for (int k = 0; k < Board.LENGTH; k++) {
+            if (board.get(k) == Color.NONE) emptyCount++;
+        }
+
+    long timeLeft = maxGameTimeMs - totalConsumedTime;
+    if (timeLeft < 500) timeLeft = 500;
 
     if (this.board.findNoPassLegalIndexes(getColor()).size() == 0) {
       // 2. 合法手なし → パス
       this.move = Move.ofPass(getColor());
     } else {
+      int myRemainingTurns = Math.max(1, emptyCount / 2);
+            
+            // 均等割りではなく、1.5倍の係数をかけて深読みを優先する（時間を前借りするイメージ）
+            currentMoveTimeLimit = (long) ((timeLeft / (double) myRemainingTurns) * 1.5);
+            
+            // ただし、1手で残り時間の40%以上を使わないようセーフティをかける
+            long maxAllowed = (long) (timeLeft * 0.4); 
+            if (currentMoveTimeLimit > maxAllowed) {
+                currentMoveTimeLimit = maxAllowed;
+            }
+            
+            // 制限時間が長ければ最低保証時間を設定
+            if (maxGameTimeMs >= 50000 && currentMoveTimeLimit < 1500) {
+                currentMoveTimeLimit = Math.min(1500, timeLeft - 500);
+            }
       // 3. 黒視点で探索するため、白番のときは盤面を反転
       MyBoard searchBoard = isBlack() ? this.board.clone() : this.board.flipped();
       this.move = null;
@@ -149,22 +198,26 @@ public class DynamicPlayer extends ap26.Player {
       if (emptyCount <= 10) {
         this.depthLimit = ap26.Board.LENGTH; // 36を指定（事実上の無限探索）
       }
-      // ------------------------------------
-      /**/
 
       // 副作用で this.move に最善手が記録される
-      maxSearch(searchBoard, Float.NEGATIVE_INFINITY, Float.POSITIVE_INFINITY, 0);
+
+      try{
+        maxSearch(searchBoard, Float.NEGATIVE_INFINITY, Float.POSITIVE_INFINITY, 0);
+      }catch(TimeoutException e){
+        return order(searchBoard.findLegalMoves(BLACK)).get(0);
+      }
       
       // --- 探索深さを元に戻す ---
       this.depthLimit = originalDepthLimit;
-      // ----------------------------------
-
+      
       // 反転して探索したので、最善手の色を自分の色に戻す
       this.move = this.move.colored(getColor());
     }
 
     // 4. 自分の指した手も内部盤面に反映
     this.board = this.board.placed(this.move);
+    long endTime = System.currentTimeMillis();
+    totalConsumedTime += (endTime - currentMoveStartTime);
     return this.move;
   }
 
@@ -173,9 +226,17 @@ public class DynamicPlayer extends ap26.Player {
    * ロジックは同じ。違いは「ルート (depth == 0) で最善手を {@link #move}
    * に保存する」点だけ。
    */
-  float maxSearch(Board currentBoard, float alpha, float beta, int depth) {
+  float maxSearch(Board currentBoard, float alpha, float beta, int depth)throws TimeoutException {
+    checkTime();
     if (isTerminal(currentBoard, depth)) {
-      return this.eval.value(currentBoard);
+      long hash = getHash(currentBoard, true);
+      int index = (int) (hash & TT_MASK);
+      float val = ttValue[index];
+      if(val==0){
+        val = this.eval.value(currentBoard);
+        ttValue[index] = val;
+      }
+      return val;
     }
 
     // 探索は常に黒視点なので、ここでは黒の合法手を生成
@@ -214,9 +275,17 @@ public class DynamicPlayer extends ap26.Player {
    * α-β 探索の min 側。unit0 の {@link AlphaBetaPlayer#minSearch} と同じ。
    * 探索は黒視点で進めるので、min 側は白（= 相手）の手を生成する。
    */
-  float minSearch(Board currentBoard, float alpha, float beta, int depth) {
+  float minSearch(Board currentBoard, float alpha, float beta, int depth)throws TimeoutException {
+    checkTime();
     if (isTerminal(currentBoard, depth)) {
-      return this.eval.value(currentBoard);
+      long hash = getHash(currentBoard, false);
+      int index = (int) (hash & TT_MASK);
+      float val = ttValue[index];
+      if(val==0){
+        val = this.eval.value(currentBoard);
+        ttValue[index] = val;
+      }
+      return val;
     }
 
     List<Move> moves = currentBoard.findLegalMoves(WHITE);
@@ -283,4 +352,24 @@ public class DynamicPlayer extends ap26.Player {
     
     return PRIORITY[k];
   }
+
+  private long getHash(Board board, boolean isBlackTurn) {
+        long hash = 0;
+        for (int i = 0; i < Board.LENGTH; i++) {
+            Color c = board.get(i);
+            if (c == Color.BLACK) hash ^= ZOBRIST[i][0];
+            else if (c == Color.WHITE) hash ^= ZOBRIST[i][1];
+        }
+        if (!isBlackTurn) hash ^= 0x123456789ABCDEFL;
+        return hash;
+    }
+
+    private void checkTime() throws TimeoutException {
+        nodeCount++;
+        if ((nodeCount & 4095) == 0) { 
+            if (System.currentTimeMillis() - currentMoveStartTime > currentMoveTimeLimit) {
+                throw new TimeoutException();
+            }
+        }
+    }
 }
