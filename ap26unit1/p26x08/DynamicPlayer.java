@@ -180,13 +180,36 @@ public class DynamicPlayer extends ap26.Player {
       // 3. 黒視点で探索するため、白番のときは盤面を反転
       MyBoard searchBoard = isBlack() ? this.board.clone() : this.board.flipped();
       this.move = null;
+      
+      /**/
+      // ---終盤の完全読み切り判定 ---
+      // 変形盤（BLOCK）があっても正確に「打てる空きマス」を数えるため、NONEをカウントする
+      int emptyCount = 0;
+      for (int k = 0; k < ap26.Board.LENGTH; k++) {
+        if (searchBoard.get(k) == ap26.Color.NONE) {
+          emptyCount++;
+        }
+      }
+
+      // 元の探索深さを退避
+      int originalDepthLimit = this.depthLimit;
+
+      // 残り空きマスが10マス以下なら、終局（最大36手）まで全て読み切る
+      if (emptyCount <= 10) {
+        this.depthLimit = ap26.Board.LENGTH; // 36を指定（事実上の無限探索）
+      }
 
       // 副作用で this.move に最善手が記録される
+
       try{
         maxSearch(searchBoard, Float.NEGATIVE_INFINITY, Float.POSITIVE_INFINITY, 0);
       }catch(TimeoutException e){
         return order(searchBoard.findLegalMoves(BLACK)).get(0);
       }
+      
+      // --- 探索深さを元に戻す ---
+      this.depthLimit = originalDepthLimit;
+      
       // 反転して探索したので、最善手の色を自分の色に戻す
       this.move = this.move.colored(getColor());
     }
