@@ -6,8 +6,6 @@ import ap26.Color;
 import static ap26.Color.BLACK;
 import static ap26.Color.WHITE;
 import ap26.Move;
-import myplayer.MyBoard;
-
 import java.util.ArrayList;
 import java.util.Collections;
 import java.util.List;

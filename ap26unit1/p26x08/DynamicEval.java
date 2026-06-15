@@ -138,15 +138,21 @@ public class DynamicEval {
     if(countHands<firstLine) part=0;
     else if(countHands>=secondLine) part=2;
     else part=1;
+    
+    // 確定石1つにつき 50.0 という圧倒的な価値を持たせる
+    float stableBonus = countStableDisks(board, BLACK) * 50.0f 
+                      - countStableDisks(board, WHITE) * 50.0f;
+    
     return (float) IntStream.range(0, LENGTH)
         .mapToDouble(k -> cellScore(board, k, part))
-        .sum() * W[part][0]
-        + board.findLegalMoves(BLACK).size() * W[part][1]
-        + board.findLegalMoves(WHITE).size() * W[part][2]
-        + board.count(BLACK) * W[part][3]
-        + board.count(WHITE) * W[part][4]
-        + relationValue.countFrontier(board,BLACK) * W[part][5]
-        + relationValue.countFrontier(board,WHITE) * W[part][6];
+        .sum() * V[part][0]
+        + board.findLegalMoves(BLACK).size() * V[part][1]
+        + board.findLegalMoves(WHITE).size() * V[part][2]
+        + board.count(BLACK) * V[part][3]
+        + board.count(WHITE) * V[part][4]
+        + relationValue.countFrontier(board,BLACK) * V[part][5]
+        + relationValue.countFrontier(board,WHITE) * V[part][6]
+        + stableBonus;
   }
 
   /** 1 マス分の評価値。黒石なら +M[r][c]、白石なら -M[r][c]、空マスは 0。*/
@@ -173,4 +179,70 @@ public class DynamicEval {
     }
   }
   
+  public int countStableDisks(Board board, ap26.Color color) {
+      boolean[] isStable = new boolean[ap26.Board.LENGTH];
+      int stableCount = 0;
+
+      // --- 上辺 (0 〜 5) ---
+      if (board.get(0) == color) {
+          for (int i = 0; i <= 5; i++) {
+              if (board.get(i) == color) isStable[i] = true;
+              else break;
+          }
+      }
+      if (board.get(5) == color) {
+          for (int i = 5; i >= 0; i--) {
+              if (board.get(i) == color) isStable[i] = true;
+              else break;
+          }
+      }
+
+      // --- 下辺 (30 〜 35) ---
+      if (board.get(30) == color) {
+          for (int i = 30; i <= 35; i++) {
+              if (board.get(i) == color) isStable[i] = true;
+              else break;
+          }
+      }
+      if (board.get(35) == color) {
+          for (int i = 35; i >= 30; i--) {
+              if (board.get(i) == color) isStable[i] = true;
+              else break;
+          }
+      }
+
+      // --- 左辺 (0, 6, 12, 18, 24, 30) ---
+      if (board.get(0) == color) {
+          for (int i = 0; i <= 30; i += 6) {
+              if (board.get(i) == color) isStable[i] = true;
+              else break;
+          }
+      }
+      if (board.get(30) == color) {
+          for (int i = 30; i >= 0; i -= 6) {
+              if (board.get(i) == color) isStable[i] = true;
+              else break;
+          }
+      }
+
+      // --- 右辺 (5, 11, 17, 23, 29, 35) ---
+      if (board.get(5) == color) {
+          for (int i = 5; i <= 35; i += 6) {
+              if (board.get(i) == color) isStable[i] = true;
+              else break;
+          }
+      }
+      if (board.get(35) == color) {
+          for (int i = 35; i >= 5; i -= 6) {
+              if (board.get(i) == color) isStable[i] = true;
+              else break;
+          }
+      }
+
+      // 確定石の数を集計
+      for (boolean b : isStable) {
+          if (b) stableCount++;
+      }
+      return stableCount;
+  }
 }
