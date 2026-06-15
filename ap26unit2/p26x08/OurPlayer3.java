@@ -25,11 +25,11 @@ public class OurPlayer3 extends Player {
     private static class TimeoutException extends Exception {}
 
     public OurPlayer3(Color color) {
-        this(color, new OurEval2(), 58_000); 
+        this(color, new OurEval2(), 75_000); 
     }
 
     public OurPlayer3(Color color, OurEval2 eval) {
-        this(color, eval, 58_000); 
+        this(color, eval, 75_000); 
     }
 
     // 進化戦略の高速学習用（早指し）コンストラクタ
