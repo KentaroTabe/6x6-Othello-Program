@@ -12,7 +12,7 @@ public class OurPlayer3 extends Player {
     private int nodeCount = 0;
     
     // 学習時や状況に応じて制限時間を変更できるようにインスタンス変数化（大会ルールは60秒=60000ms。バッファ込で58秒）
-    private long maxGameTimeMs = 75_000;
+    private long maxGameTimeMs = 70_000;
     
     private static final int TT_SIZE = 1 << 20; 
     private static final int TT_MASK = TT_SIZE - 1;
@@ -25,11 +25,11 @@ public class OurPlayer3 extends Player {
     private static class TimeoutException extends Exception {}
 
     public OurPlayer3(Color color) {
-        this(color, new OurEval2(), 75_000); 
+        this(color, new OurEval2(), 70_000); 
     }
 
     public OurPlayer3(Color color, OurEval2 eval) {
-        this(color, eval, 75_000); 
+        this(color, eval, 70_000); 
     }
 
     // 進化戦略の高速学習用（早指し）コンストラクタ
