@@ -1,6 +1,7 @@
 package p26x08;
 
 import ap26.Board;
+import static ap26.Board.SIZE;
 import ap26.Color;
 import static ap26.Color.BLACK;
 import static ap26.Color.WHITE;
@@ -78,9 +79,10 @@ public class DynamicPlayer extends ap26.Player {
   private long currentMoveStartTime;
   private long currentMoveTimeLimit;
   private int nodeCount = 0;
+  private int firstTurn = 0;
     
   // 学習時や状況に応じて制限時間を変更できるようにインスタンス変数化（大会ルールは60秒=60000ms。バッファ込で58秒）
-  private long maxGameTimeMs = 58_000;
+  private long maxGameTimeMs = 58000;
   private static class TimeoutException extends Exception {}
   
   /** デフォルトのプレイヤー名（リーグ戦で識別用）。*/
@@ -96,7 +98,7 @@ public class DynamicPlayer extends ap26.Player {
   Move move;
 
   /** 探索用の内部盤面。相手の手番を逐次反映する。*/
-  MyBoard board;
+  Board board;
 
   /** デフォルトコンストラクタ。深さ 2 で構築。*/
   public DynamicPlayer(Color color) {
@@ -108,7 +110,6 @@ public class DynamicPlayer extends ap26.Player {
     super(name, color);
     this.eval = eval;
     this.depthLimit = depthLimit;
-    this.board = new MyBoard();
     this.ttValue = new float[TT_SIZE];
   }
 
@@ -123,9 +124,9 @@ public class DynamicPlayer extends ap26.Player {
    */
   @Override
   public void setBoard(Board board) {
-    for (int k = 0; k < ap26.Board.LENGTH; k++) {
-      this.board.set(k, board.get(k));
-    }
+    this.board = board.clone();
+    this.eval.InitializeEval(board);
+    DynamicEval.blockArrange(board, PRIORITY);
   }
 
   /** 自分が黒番か。*/
@@ -158,35 +159,53 @@ public class DynamicPlayer extends ap26.Player {
     long timeLeft = maxGameTimeMs - totalConsumedTime;
     if (timeLeft < 500) timeLeft = 500;
 
-    if (this.board.findNoPassLegalIndexes(getColor()).size() == 0) {
+    if (this.board.findLegalMoves(getColor()).get(0).isPass()) {
       // 2. 合法手なし → パス
       this.move = Move.ofPass(getColor());
     } else {
       int myRemainingTurns = Math.max(1, emptyCount / 2);
             
             // 均等割りではなく、1.5倍の係数をかけて深読みを優先する（時間を前借りするイメージ）
-            currentMoveTimeLimit = (long) ((timeLeft / (double) myRemainingTurns) * 1.5);
+            currentMoveTimeLimit = (long) ((timeLeft / (double) myRemainingTurns) * 2.0);
             
+            /**
             // ただし、1手で残り時間の40%以上を使わないようセーフティをかける
-            long maxAllowed = (long) (timeLeft * 0.4); 
+            long maxAllowed = (long) (timeLeft * 0.6); 
             if (currentMoveTimeLimit > maxAllowed) {
                 currentMoveTimeLimit = maxAllowed;
             }
+                */
             
             // 制限時間が長ければ最低保証時間を設定
             if (maxGameTimeMs >= 50000 && currentMoveTimeLimit < 1500) {
                 currentMoveTimeLimit = Math.min(1500, timeLeft - 500);
             }
       // 3. 黒視点で探索するため、白番のときは盤面を反転
-      MyBoard searchBoard = isBlack() ? this.board.clone() : this.board.flipped();
-      this.move = null;
+      Board searchBoard = isBlack() ? this.board.clone() : this.board.flipped();
+      this.move = order(searchBoard.findLegalMoves(BLACK)).get(0);
 
       // 副作用で this.move に最善手が記録される
-      try{
-        maxSearch(searchBoard, Float.NEGATIVE_INFINITY, Float.POSITIVE_INFINITY, 0);
-      }catch(TimeoutException e){
-        return order(searchBoard.findLegalMoves(BLACK)).get(0);
+      int depthMax = this.depthLimit;
+      if(firstTurn<1){
+        firstTurn++;
+        this.depthLimit = 0;
+        if(getColor() == WHITE){
+          if(board.get(8)==BLACK) this.move = Move.of(19, WHITE);
+          else if(board.get(13)==BLACK) this.move = Move.of(10, WHITE);
+          else if(board.get(22)==BLACK) this.move = Move.of(26, WHITE);
+          else this.move = Move.of(16, WHITE);
+          
+        }
       }
+      while(true)
+      {
+        try{
+        maxSearch(searchBoard, Float.NEGATIVE_INFINITY, Float.POSITIVE_INFINITY, 0);
+        break;
+        }catch(TimeoutException e){}
+        this.depthLimit -= 1;
+      }
+      this.depthLimit = depthMax;
       // 反転して探索したので、最善手の色を自分の色に戻す
       this.move = this.move.colored(getColor());
     }
@@ -204,7 +223,7 @@ public class DynamicPlayer extends ap26.Player {
    * に保存する」点だけ。
    */
   float maxSearch(Board currentBoard, float alpha, float beta, int depth)throws TimeoutException {
-    checkTime();
+    //checkTime();
     if (isTerminal(currentBoard, depth)) {
       long hash = getHash(currentBoard, true);
       int index = (int) (hash & TT_MASK);
@@ -253,7 +272,7 @@ public class DynamicPlayer extends ap26.Player {
    * 探索は黒視点で進めるので、min 側は白（= 相手）の手を生成する。
    */
   float minSearch(Board currentBoard, float alpha, float beta, int depth)throws TimeoutException {
-    checkTime();
+    //checkTime();
     if (isTerminal(currentBoard, depth)) {
       long hash = getHash(currentBoard, false);
       int index = (int) (hash & TT_MASK);
@@ -308,26 +327,27 @@ public class DynamicPlayer extends ap26.Player {
    * 着手マスの優先度を返すヘルパーメソッド。
    * 6x6盤面における簡易的な静的評価値。角を最大、角の斜め内側(Xマス)を最小とする。
    */
+  float[][] PRIORITY = {
+       {100, -20,  10,  10, -20, 100},
+       {-20, -50,  -5,  -5, -50, -20},
+        {10,  -5,   0,   0,  -5,  10},
+        {10,  -5,   0,   0,  -5,  10},
+       {-20, -50,  -5,  -5, -50, -20},
+       {100, -20,  10,  10, -20, 100}
+    };
   int getMovePriority(Move move) {
     if (move.isPass()) {
         return 0;
     }
 
     int k = move.getIndex();
+    int row = k / SIZE;
+    int col = k % SIZE;
     
     // 6x6 用の優先度テーブル (1次元配列でアクセスを高速化)
     // 評価関数(DynamicEval)の重みと似ているが、探索順序を決めるだけの
-    // 大雑把な値で十分機能する。
-    int[] PRIORITY = {
-       100, -20,  10,  10, -20, 100,
-       -20, -50,  -5,  -5, -50, -20,
-        10,  -5,   0,   0,  -5,  10,
-        10,  -5,   0,   0,  -5,  10,
-       -20, -50,  -5,  -5, -50, -20,
-       100, -20,  10,  10, -20, 100
-    };
-    
-    return PRIORITY[k];
+    // 大雑把な値で十分機能する
+    return (int)(PRIORITY[row][col]);
   }
 
   private long getHash(Board board, boolean isBlackTurn) {

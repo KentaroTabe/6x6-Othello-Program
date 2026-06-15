@@ -77,20 +77,16 @@ public class DynamicEval {
     }
   };
   float [][][] MC = new float[3][6][6];
-  void addMC(float dif,int k){
-    int row = k / SIZE;
-    int col = k % SIZE;
-    for(int i=0;i<3;i++) MC[i][row][col] += dif;
-  }
-  boolean thefirst = true;
 
-  public DynamicEval(){
+  public void InitializeEval(Board board){
     for(int i=0;i<3;i++){
       for(int j=0;j<6;j++){
         for(int k=0;k<6;k++) MC[i][j][k] = M[i][j][k];
       }
     }
-    thefirst = true;
+    for(int i=0;i<3;i++){
+      blockArrange(board, MC[i]);
+    }
   }
 
   static final float[][] N = {
@@ -110,6 +106,11 @@ public class DynamicEval {
     {1,9,-9,-3,3,-6,6},
     {1,9,-9,3,-3,-6,6},
     {1,6,-10,8,-5,0,0}
+  };
+  static final float[][] V = {
+    {0.08f, 10.96f, -7.12f, -0.81f, 3.58f, -9.87f, 3.12f, },
+    {0.87f, 15.44f, -7.61f, -0.98f, -2.69f, -4.52f, 8.33f, },
+    {1.51f, 6.15f, -10.23f, 14.61f, -5.00f, 0.12f, -3.51f, },
   };
 
   /**
@@ -132,12 +133,8 @@ public class DynamicEval {
       return 1_000_000 * board.score();
     }
 
-    if(thefirst){
-      blockArrange(board);
-      thefirst=false;
-    }
     int part;
-    int countHands = board.count(BLACK)+board.count(WHITE);
+    int countHands = board.count(BLACK)+board.count(WHITE)+board.count(BLOCK);
     if(countHands<firstLine) part=0;
     else if(countHands>=secondLine) part=2;
     else part=1;
@@ -160,18 +157,18 @@ public class DynamicEval {
     //return N[row][col] * board.get(k).getValue();
   }
 
-  void blockArrange(Board board){
+  public static void blockArrange(Board board, float MC[][]){
     for(int k=0;k<6;k++){
       if(board.get(k)==BLOCK){
-        if(k==0){addMC(40,k+1);addMC(40,k+6);}
-        else if(k==5){addMC(40,k-1);addMC(40,k+6);}
-        else{addMC(40,k+1);addMC(40,k-1);addMC(10,k+6);}
+        if(k==0){MC[0][1]+=40;MC[1][0]+=40;}
+        else if(k==5){MC[0][4]+=40;MC[1][5]+=40;}
+        else{MC[0][k-1]+=40;MC[0][k+1]+=40;MC[1][k]+=10;}
       }
     }
     for(int k=6;k<Board.LENGTH;k+=6){
       if(board.get(k)==BLOCK){
-        if(k==30){addMC(40,k+1);addMC(40,k-6);}
-        else{addMC(40,k+6);addMC(40,k-6);addMC(10,k+1);}
+        if(k==30){MC[4][0]+=40;MC[5][1]+=40;}
+        else{MC[k/6-1][0]+=40;MC[k/6+1][0]+=40;MC[k/6][1]+=10;}
       }
     }
   }
