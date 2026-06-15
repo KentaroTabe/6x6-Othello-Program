@@ -10,8 +10,6 @@ import java.util.ArrayList;
 import java.util.Collections;
 import java.util.List;
 import java.util.Random;
-import myplayer.MyBoard;
-import myplayer.MyEval;
 
 /**
  * α-β 法で次の一手を決めるオセロプレイヤー。

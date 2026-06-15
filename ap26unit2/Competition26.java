@@ -54,7 +54,7 @@ public class Competition26 {
         Function<Color, Player[]> builder = (Color color) -> {
             return new Player[] {
                     // サンプル学生プレイヤー
-                    new p26x08.OurPlayer(color),
+                    new p26x08.DynamicPlayer(color),
 
                     // ベースライン
                     new p26x08.OurPlayer1(color),
