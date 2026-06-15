@@ -34,7 +34,7 @@ public class OurPlayer3 extends Player {
 
     // 進化戦略の高速学習用（早指し）コンストラクタ
     public OurPlayer3(Color color, OurEval2 eval, long maxGameTimeMs) {
-        super("0159", color); 
+        super("our3", color); 
         this.eval = eval;
         this.maxGameTimeMs = maxGameTimeMs;
     }
@@ -75,8 +75,8 @@ public class OurPlayer3 extends Player {
             // 残り手番数の見積もり
             int myRemainingTurns = Math.max(1, emptyCount / 2);
             
-            // 均等割りではなく、1.8倍の係数をかけて深読みを優先する（時間を前借りするイメージ）
-            currentMoveTimeLimit = (long) ((timeLeft / (double) myRemainingTurns) * 1.8);
+            // 均等割りではなく、1.5倍の係数をかけて深読みを優先する（時間を前借りするイメージ）
+            currentMoveTimeLimit = (long) ((timeLeft / (double) myRemainingTurns) * 1.5);
             
             // ただし、1手で残り時間の40%以上を使わないようセーフティをかける
             long maxAllowed = (long) (timeLeft * 0.4); 

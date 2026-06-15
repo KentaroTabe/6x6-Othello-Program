@@ -272,14 +272,14 @@ public class Trainer2 {
             
             futures.add(CompletableFuture.supplyAsync(() -> {
                 // コンストラクタ引数からFAST_GAME_TIME_MSを削除し、デフォルトの大会ルール（58秒）を適用
-                Player parentAsBlack = new OurPlayer2(Color.BLACK, parentEval);
-                Player childAsWhite = new OurPlayer2(Color.WHITE, mutantEval);
+                Player parentAsBlack = new OurPlayer3(Color.BLACK, parentEval);
+                Player childAsWhite = new OurPlayer3(Color.WHITE, mutantEval);
                 return playMatch(parentAsBlack, childAsWhite, board);
             }, executor));
 
             futures.add(CompletableFuture.supplyAsync(() -> {
-                Player childAsBlack = new OurPlayer2(Color.BLACK, mutantEval);
-                Player parentAsWhite = new OurPlayer2(Color.WHITE, parentEval);
+                Player childAsBlack = new OurPlayer3(Color.BLACK, mutantEval);
+                Player parentAsWhite = new OurPlayer3(Color.WHITE, parentEval);
                 return playMatch(childAsBlack, parentAsWhite, board);
             }, executor));
         }
