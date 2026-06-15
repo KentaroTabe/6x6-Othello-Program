@@ -3,7 +3,7 @@ package p26x08; // 提出時はチーム番号（例：p26x01）に変更して�
 import ap26.*;
 import java.util.*;
 
-public class OurPlayer extends Player {
+public class OurPlayer_0526 extends Player {
     private static final String PLAYER_NAME = "STRG"; // 他チームと被らない4文字に変更
     private static final float INF = 10000000f;
 
@@ -12,7 +12,7 @@ public class OurPlayer extends Player {
     private long timeUsedMillis = 0;
     private boolean timeOut = false;
 
-    public OurPlayer(Color color) {
+    public OurPlayer_0526(Color color) {
         super(PLAYER_NAME, color);
     }
 
