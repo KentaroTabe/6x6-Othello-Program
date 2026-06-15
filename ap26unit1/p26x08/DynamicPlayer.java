@@ -191,10 +191,10 @@ public class DynamicPlayer extends ap26.Player {
         firstTurn++;
         this.depthLimit = 0;
         if(getColor() == WHITE){
-          if(board.get(8)==BLACK) this.move = Move.of(19, WHITE);
-          else if(board.get(13)==BLACK) this.move = Move.of(10, WHITE);
-          else if(board.get(22)==BLACK) this.move = Move.of(26, WHITE);
-          else this.move = Move.of(16, WHITE);
+          if(board.get(9)==BLACK) this.move = Move.of(22, WHITE);
+          else if(board.get(16)==BLACK) this.move = Move.of(8, WHITE);
+          else if(board.get(19)==BLACK) this.move = Move.of(27, WHITE);
+          else this.move = Move.of(13, WHITE);
           
         }
       }
