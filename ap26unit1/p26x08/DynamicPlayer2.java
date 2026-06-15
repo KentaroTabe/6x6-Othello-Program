@@ -10,8 +10,6 @@ import java.util.ArrayList;
 import java.util.Collections;
 import java.util.List;
 import java.util.Random;
-import myplayer.MyBoard;
-import myplayer.MyEval;
 
 /**
  * α-β 法で次の一手を決めるオセロプレイヤー。
@@ -80,6 +78,7 @@ public class DynamicPlayer2 extends ap26.Player {
   private long currentMoveTimeLimit;
   private int nodeCount = 0;
   private int firstTurn = 0;
+  private int totalNode = 0;
     
   // 学習時や状況に応じて制限時間を変更できるようにインスタンス変数化（大会ルールは60秒=60000ms。バッファ込で58秒）
   private long maxGameTimeMs = 58000;
@@ -129,6 +128,7 @@ public class DynamicPlayer2 extends ap26.Player {
     this.board = board.clone();
     this.eval.InitializeEval(board);
     DynamicEval.blockArrange(board, PRIORITY);
+    System.out.println("GameStart!");
   }
 
   /** 自分が黒番か。*/
@@ -235,6 +235,8 @@ public class DynamicPlayer2 extends ap26.Player {
     this.board = this.board.placed(this.move);
     long endTime = System.currentTimeMillis();
     totalConsumedTime += (endTime - currentMoveStartTime);
+    totalNode += nodeCount;
+    System.out.printf("node = %d, time = %d\n",totalNode,totalConsumedTime);
     return this.move;
   }
 

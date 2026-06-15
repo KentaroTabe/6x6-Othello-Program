@@ -10,6 +10,7 @@ public class OurPlayer2 extends Player {
     private long currentMoveStartTime;
     private long currentMoveTimeLimit;
     private int nodeCount = 0;
+    private int totalNode = 0;
     
     // 学習時や状況に応じて制限時間を変更できるようにインスタンス変数化（大会ルールは60秒=60000ms。バッファ込で58秒）
     private long maxGameTimeMs = 58_000;
@@ -54,6 +55,7 @@ public class OurPlayer2 extends Player {
         this.totalConsumedTime = 0;
         this.ttHash = new long[TT_SIZE];
         this.ttFlag = new byte[TT_SIZE];
+        System.out.println("GameStart!");
     }
 
     @Override
@@ -138,7 +140,8 @@ public class OurPlayer2 extends Player {
 
         long endTime = System.currentTimeMillis();
         totalConsumedTime += (endTime - currentMoveStartTime);
-        
+        totalNode += nodeCount;
+        System.out.printf("node = %d, time = %d\n",totalNode,totalConsumedTime);
         return bestMove;
     }
 

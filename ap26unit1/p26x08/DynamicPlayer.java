@@ -73,13 +73,19 @@ public class DynamicPlayer extends ap26.Player {
   
   private static final int TT_SIZE = 1 << 20; 
   private static final int TT_MASK = TT_SIZE - 1;
+  // 置換表の精度を上げるため、OurPlayer2を参考に配列を追加
+  private long[] ttHash = new long[TT_SIZE];
+  private int[] ttDepth = new int[TT_SIZE];
   private float[] ttValue = new float[TT_SIZE];
+  private byte[] ttFlag = new byte[TT_SIZE];
 
   private long totalConsumedTime = 0;
   private long currentMoveStartTime;
   private long currentMoveTimeLimit;
   private int nodeCount = 0;
   private int firstTurn = 0;
+
+  private int totalNode = 0;
     
   // 学習時や状況に応じて制限時間を変更できるようにインスタンス変数化（大会ルールは60秒=60000ms。バッファ込で58秒）
   private long maxGameTimeMs = 58000;
@@ -102,7 +108,7 @@ public class DynamicPlayer extends ap26.Player {
 
   /** デフォルトコンストラクタ。深さ 2 で構築。*/
   public DynamicPlayer(Color color) {
-    this(MY_NAME, color, new DynamicEval(), 8);
+    this(MY_NAME, color, new DynamicEval(), 9);
   }
 
   /** 全パラメータを明示するコンストラクタ。*/
@@ -110,7 +116,11 @@ public class DynamicPlayer extends ap26.Player {
     super(name, color);
     this.eval = eval;
     this.depthLimit = depthLimit;
+    // 全ての置換表配列を初期化
+    this.ttHash = new long[TT_SIZE];
+    this.ttDepth = new int[TT_SIZE];
     this.ttValue = new float[TT_SIZE];
+    this.ttFlag = new byte[TT_SIZE];
   }
 
   /** 名前と深さを指定するコンストラクタ（評価関数はデフォルト）。*/
@@ -127,6 +137,10 @@ public class DynamicPlayer extends ap26.Player {
     this.board = board.clone();
     this.eval.InitializeEval(board);
     DynamicEval.blockArrange(board, PRIORITY);
+    // 新しいゲームごとに置換表をクリアする
+    this.ttHash = new long[TT_SIZE];
+    this.ttFlag = new byte[TT_SIZE];
+    System.out.println("GameStart!");
   }
 
   /** 自分が黒番か。*/
@@ -166,15 +180,15 @@ public class DynamicPlayer extends ap26.Player {
       int myRemainingTurns = Math.max(1, emptyCount / 2);
             
             // 均等割りではなく、1.5倍の係数をかけて深読みを優先する（時間を前借りするイメージ）
-            currentMoveTimeLimit = (long) ((timeLeft / (double) myRemainingTurns) * 2.0);
+            currentMoveTimeLimit = (long) ((timeLeft / (double) myRemainingTurns) * 2.2);
             
-            /**
+            
             // ただし、1手で残り時間の40%以上を使わないようセーフティをかける
-            long maxAllowed = (long) (timeLeft * 0.6); 
+            long maxAllowed = (long) (timeLeft * 0.8); 
             if (currentMoveTimeLimit > maxAllowed) {
                 currentMoveTimeLimit = maxAllowed;
             }
-                */
+                
             
             // 制限時間が長ければ最低保証時間を設定
             if (maxGameTimeMs >= 50000 && currentMoveTimeLimit < 1500) {
@@ -183,30 +197,37 @@ public class DynamicPlayer extends ap26.Player {
       // 3. 黒視点で探索するため、白番のときは盤面を反転
 
       Board searchBoard = isBlack() ? this.board.clone() : this.board.flipped();
-      this.move = order(searchBoard.findLegalMoves(BLACK)).get(0);
+      Move bestMove = order(searchBoard.findLegalMoves(BLACK)).get(0);
 
       // 副作用で this.move に最善手が記録される
       int depthMax = this.depthLimit;
       if(firstTurn<1){
         firstTurn++;
-        this.depthLimit = 0;
         if(getColor() == WHITE){
           if(board.get(9)==BLACK) this.move = Move.of(22, WHITE);
           else if(board.get(16)==BLACK) this.move = Move.of(8, WHITE);
           else if(board.get(19)==BLACK) this.move = Move.of(27, WHITE);
-          else this.move = Move.of(13, WHITE);
-          
+          else this.move = Move.of(13, WHITE); 
         }
+        else this.move = bestMove;
       }
-      while(true)
+      else
       {
-        try{
-        maxSearch(searchBoard, Float.NEGATIVE_INFINITY, Float.POSITIVE_INFINITY, 0);
-        break;
-        }catch(TimeoutException e){}
-        this.depthLimit -= 1;
+        for (int d = 1; d <= depthMax; d++) {
+            this.depthLimit = d;
+            try {
+                maxSearch(searchBoard, Float.NEGATIVE_INFINITY, Float.POSITIVE_INFINITY, 0);
+                // タイムアウトせずに完了したら、この深度での最善手を保存
+                bestMove = this.move;
+            } catch (TimeoutException e) {
+                // タイムアウトしたらループを抜け、1つ前の深度で完成した最善手を採用
+                //System.out.println("timeout!");
+                break;
+            }
+        }
+        this.move = bestMove.colored(getColor());
+        this.depthLimit = depthMax; // 深度の上限を元に戻す}
       }
-      this.depthLimit = depthMax;
 
       // 反転して探索したので、最善手の色を自分の色に戻す
       this.move = this.move.colored(getColor());
@@ -216,6 +237,8 @@ public class DynamicPlayer extends ap26.Player {
     this.board = this.board.placed(this.move);
     long endTime = System.currentTimeMillis();
     totalConsumedTime += (endTime - currentMoveStartTime);
+    totalNode += nodeCount;
+    System.out.printf("node = %d, time = %d\n",totalNode,totalConsumedTime);
     return this.move;
   }
 
@@ -225,17 +248,26 @@ public class DynamicPlayer extends ap26.Player {
    * に保存する」点だけ。
    */
   float maxSearch(Board currentBoard, float alpha, float beta, int depth)throws TimeoutException {
-    //checkTime();
+    checkTime();
+  
     if (isTerminal(currentBoard, depth)) {
-      long hash = getHash(currentBoard, true);
-      int index = (int) (hash & TT_MASK);
-      float val = ttValue[index];
-      if(val==0){
-        val = this.eval.value(currentBoard);
-        ttValue[index] = val;
-      }
-      return val;
+        return this.eval.value(currentBoard);
     }
+    // --- 置換表 (TT) のルックアップ ---
+    long hash = getHash(currentBoard, true);
+    int index = (int) (hash & TT_MASK);
+    int remainingDepth = this.depthLimit - depth;
+
+    if (ttFlag[index] != 0 && ttHash[index] == hash) {
+        if (ttDepth[index] >= remainingDepth) {
+            float val = ttValue[index];
+            if (ttFlag[index] == 1) return val; // Exact
+            if (ttFlag[index] == 2 && val >= beta) return val; // Lower Bound
+            if (ttFlag[index] == 3 && val <= alpha) return val; // Upper Bound
+        }
+    }
+    float alphaOrig = alpha;
+
 
     // 探索は常に黒視点なので、ここでは黒の合法手を生成
     List<Move> moves = currentBoard.findLegalMoves(BLACK);
@@ -266,6 +298,9 @@ public class DynamicPlayer extends ap26.Player {
       }
     }
 
+    // --- 置換表 (TT) への保存 ---
+    storeTT(hash, remainingDepth, alpha, alphaOrig, beta);
+    
     return alpha;
   }
 
@@ -274,17 +309,26 @@ public class DynamicPlayer extends ap26.Player {
    * 探索は黒視点で進めるので、min 側は白（= 相手）の手を生成する。
    */
   float minSearch(Board currentBoard, float alpha, float beta, int depth)throws TimeoutException {
-    //checkTime();
+    checkTime();
+    
     if (isTerminal(currentBoard, depth)) {
-      long hash = getHash(currentBoard, false);
-      int index = (int) (hash & TT_MASK);
-      float val = ttValue[index];
-      if(val==0){
-        val = this.eval.value(currentBoard);
-        ttValue[index] = val;
-      }
-      return val;
+        return this.eval.value(currentBoard);
     }
+
+    // --- 置換表 (TT) のルックアップ ---
+    long hash = getHash(currentBoard, false);
+    int index = (int) (hash & TT_MASK);
+    int remainingDepth = this.depthLimit - depth;
+
+    if (ttFlag[index] != 0 && ttHash[index] == hash) {
+        if (ttDepth[index] >= remainingDepth) {
+            float val = ttValue[index];
+            if (ttFlag[index] == 1) return val; // Exact
+            if (ttFlag[index] == 2 && val >= beta) return val; // Lower Bound
+            if (ttFlag[index] == 3 && val <= alpha) return val; // Upper Bound
+        }
+    }
+    float betaOrig = beta;
 
     List<Move> moves = currentBoard.findLegalMoves(WHITE);
     moves = order(moves);
@@ -299,6 +343,9 @@ public class DynamicPlayer extends ap26.Player {
         break;
       }
     }
+
+    // --- 置換表 (TT) への保存 ---
+    storeTT(hash, remainingDepth, beta, alpha, betaOrig);
 
     return beta;
   }
@@ -371,4 +418,20 @@ public class DynamicPlayer extends ap26.Player {
             }
         }
     }
+
+    /**
+   * 置換表への値の書き込み。
+   * OurPlayer2 のロジックをベースにフラグ（Exact, Upper, Lower）を判定して保存します。
+   */
+  private void storeTT(long hash, int depth, float val, float alphaOrig, float beta) {
+    int index = (int) (hash & TT_MASK);
+    byte flag = 1; // Exact
+    if (val <= alphaOrig) flag = 3; // Upper Bound (これ以上良くならない)
+    else if (val >= beta) flag = 2; // Lower Bound (これ以上悪くならない)
+    
+    ttHash[index] = hash;
+    ttDepth[index] = depth;
+    ttValue[index] = val;
+    ttFlag[index] = flag;
+  }
 }
