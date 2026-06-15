@@ -181,6 +181,7 @@ public class DynamicPlayer extends ap26.Player {
                 currentMoveTimeLimit = Math.min(1500, timeLeft - 500);
             }
       // 3. 黒視点で探索するため、白番のときは盤面を反転
+
       Board searchBoard = isBlack() ? this.board.clone() : this.board.flipped();
       this.move = order(searchBoard.findLegalMoves(BLACK)).get(0);
 
@@ -206,6 +207,7 @@ public class DynamicPlayer extends ap26.Player {
         this.depthLimit -= 1;
       }
       this.depthLimit = depthMax;
+
       // 反転して探索したので、最善手の色を自分の色に戻す
       this.move = this.move.colored(getColor());
     }
