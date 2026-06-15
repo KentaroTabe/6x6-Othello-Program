@@ -140,13 +140,13 @@ public class DynamicEval {
     else part=1;
     return (float) IntStream.range(0, LENGTH)
         .mapToDouble(k -> cellScore(board, k, part))
-        .sum() * W[part][0]
-        + board.findLegalMoves(BLACK).size() * W[part][1]
-        + board.findLegalMoves(WHITE).size() * W[part][2]
-        + board.count(BLACK) * W[part][3]
-        + board.count(WHITE) * W[part][4]
-        + relationValue.countFrontier(board,BLACK) * W[part][5]
-        + relationValue.countFrontier(board,WHITE) * W[part][6];
+        .sum() * V[part][0]
+        + board.findLegalMoves(BLACK).size() * V[part][1]
+        + board.findLegalMoves(WHITE).size() * V[part][2]
+        + board.count(BLACK) * V[part][3]
+        + board.count(WHITE) * V[part][4]
+        + relationValue.countFrontier(board,BLACK) * V[part][5]
+        + relationValue.countFrontier(board,WHITE) * V[part][6];
   }
 
   /** 1 マス分の評価値。黒石なら +M[r][c]、白石なら -M[r][c]、空マスは 0。*/
