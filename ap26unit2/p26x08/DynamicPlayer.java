@@ -10,6 +10,8 @@ import java.util.ArrayList;
 import java.util.Collections;
 import java.util.List;
 import java.util.Random;
+import myplayer.MyBoard;
+import myplayer.MyEval;
 
 /**
  * α-β 法で次の一手を決めるオセロプレイヤー。
@@ -21,9 +23,9 @@ import java.util.Random;
  *
  * <h2>クラスの責務</h2>
  * <ul>
- *   <li>{@link ap26.Player} を継承し、{@link #think(Board)} で次の一手を返す</li>
- *   <li>内部で {@link MyEval} と α-β 探索を組み合わせる</li>
- *   <li>探索の最大深さ {@link #depthLimit} を持つ</li>
+ * <li>{@link ap26.Player} を継承し、{@link #think(Board)} で次の一手を返す</li>
+ * <li>内部で {@link MyEval} と α-β 探索を組み合わせる</li>
+ * <li>探索の最大深さ {@link #depthLimit} を持つ</li>
  * </ul>
  *
  * <h2>実装上のトリック</h2>
@@ -71,7 +73,12 @@ public class DynamicPlayer extends ap26.Player {
   
   private static final int TT_SIZE = 1 << 20; 
   private static final int TT_MASK = TT_SIZE - 1;
+  
+  // 置換表の精度を上げるため、OurPlayer2を参考に配列を追加
+  private long[] ttHash = new long[TT_SIZE];
+  private int[] ttDepth = new int[TT_SIZE];
   private float[] ttValue = new float[TT_SIZE];
+  private byte[] ttFlag = new byte[TT_SIZE];
 
   private long totalConsumedTime = 0;
   private long currentMoveStartTime;
@@ -108,7 +115,12 @@ public class DynamicPlayer extends ap26.Player {
     super(name, color);
     this.eval = eval;
     this.depthLimit = depthLimit;
+    
+    // 全ての置換表配列を初期化
+    this.ttHash = new long[TT_SIZE];
+    this.ttDepth = new int[TT_SIZE];
     this.ttValue = new float[TT_SIZE];
+    this.ttFlag = new byte[TT_SIZE];
   }
 
   /** 名前と深さを指定するコンストラクタ（評価関数はデフォルト）。*/
@@ -125,6 +137,10 @@ public class DynamicPlayer extends ap26.Player {
     this.board = board.clone();
     this.eval.InitializeEval(board);
     DynamicEval.blockArrange(board, PRIORITY);
+    
+    // 新しいゲームごとに置換表をクリアする
+    this.ttHash = new long[TT_SIZE];
+    this.ttFlag = new byte[TT_SIZE];
   }
 
   /** 自分が黒番か。*/
@@ -137,10 +153,10 @@ public class DynamicPlayer extends ap26.Player {
    *
    * <p>処理手順:
    * <ol>
-   *   <li>相手の直前手 ({@code board.getMove()}) を内部盤面に反映</li>
-   *   <li>合法手が無ければパス</li>
-   *   <li>あれば α-β 探索で最善手 {@link #move} を決定</li>
-   *   <li>決定した手を内部盤面にも反映して返す</li>
+   * <li>相手の直前手 ({@code board.getMove()}) を内部盤面に反映</li>
+   * <li>合法手が無ければパス</li>
+   * <li>あれば α-β 探索で最善手 {@link #move} を決定</li>
+   * <li>決定した手を内部盤面にも反映して返す</li>
    * </ol>
    */
   @Override
@@ -189,10 +205,10 @@ public class DynamicPlayer extends ap26.Player {
         firstTurn++;
         this.depthLimit = 0;
         if(getColor() == WHITE){
-          if(board.get(8)==BLACK) this.move = Move.of(19, WHITE);
-          else if(board.get(13)==BLACK) this.move = Move.of(10, WHITE);
-          else if(board.get(22)==BLACK) this.move = Move.of(26, WHITE);
-          else this.move = Move.of(16, WHITE);
+          if(board.get(9)==BLACK) this.move = Move.of(22, WHITE);
+          else if(board.get(16)==BLACK) this.move = Move.of(8, WHITE);
+          else if(board.get(19)==BLACK) this.move = Move.of(27, WHITE);
+          else this.move = Move.of(13, WHITE);
           
         }
       }
@@ -224,16 +240,25 @@ public class DynamicPlayer extends ap26.Player {
    */
   float maxSearch(Board currentBoard, float alpha, float beta, int depth)throws TimeoutException {
     //checkTime();
+    
     if (isTerminal(currentBoard, depth)) {
-      long hash = getHash(currentBoard, true);
-      int index = (int) (hash & TT_MASK);
-      float val = ttValue[index];
-      if(val==0){
-        val = this.eval.value(currentBoard);
-        ttValue[index] = val;
-      }
-      return val;
+      return this.eval.value(currentBoard);
     }
+
+    // --- 置換表 (TT) のルックアップ ---
+    long hash = getHash(currentBoard, true);
+    int index = (int) (hash & TT_MASK);
+    int remainingDepth = this.depthLimit - depth;
+
+    if (ttFlag[index] != 0 && ttHash[index] == hash) {
+        if (ttDepth[index] >= remainingDepth) {
+            float val = ttValue[index];
+            if (ttFlag[index] == 1) return val; // Exact
+            if (ttFlag[index] == 2 && val >= beta) return val; // Lower Bound
+            if (ttFlag[index] == 3 && val <= alpha) return val; // Upper Bound
+        }
+    }
+    float alphaOrig = alpha;
 
     // 探索は常に黒視点なので、ここでは黒の合法手を生成
     List<Move> moves = currentBoard.findLegalMoves(BLACK);
@@ -264,6 +289,8 @@ public class DynamicPlayer extends ap26.Player {
       }
     }
 
+    // --- 置換表 (TT) への保存 ---
+    storeTT(hash, remainingDepth, alpha, alphaOrig, beta);
     return alpha;
   }
 
@@ -273,16 +300,25 @@ public class DynamicPlayer extends ap26.Player {
    */
   float minSearch(Board currentBoard, float alpha, float beta, int depth)throws TimeoutException {
     //checkTime();
+    
     if (isTerminal(currentBoard, depth)) {
-      long hash = getHash(currentBoard, false);
-      int index = (int) (hash & TT_MASK);
-      float val = ttValue[index];
-      if(val==0){
-        val = this.eval.value(currentBoard);
-        ttValue[index] = val;
-      }
-      return val;
+      return this.eval.value(currentBoard);
     }
+
+    // --- 置換表 (TT) のルックアップ ---
+    long hash = getHash(currentBoard, false);
+    int index = (int) (hash & TT_MASK);
+    int remainingDepth = this.depthLimit - depth;
+
+    if (ttFlag[index] != 0 && ttHash[index] == hash) {
+        if (ttDepth[index] >= remainingDepth) {
+            float val = ttValue[index];
+            if (ttFlag[index] == 1) return val; // Exact
+            if (ttFlag[index] == 2 && val >= beta) return val; // Lower Bound
+            if (ttFlag[index] == 3 && val <= alpha) return val; // Upper Bound
+        }
+    }
+    float betaOrig = beta;
 
     List<Move> moves = currentBoard.findLegalMoves(WHITE);
     moves = order(moves);
@@ -298,12 +334,30 @@ public class DynamicPlayer extends ap26.Player {
       }
     }
 
+    // --- 置換表 (TT) への保存 ---
+    storeTT(hash, remainingDepth, beta, alpha, betaOrig);
     return beta;
   }
 
   /** 探索打ち切り判定。unit0 と同じ。*/
   boolean isTerminal(Board currentBoard, int depth) {
     return currentBoard.isEnd() || depth > this.depthLimit;
+  }
+
+  /**
+   * 置換表への値の書き込み。
+   * OurPlayer2 のロジックをベースにフラグ（Exact, Upper, Lower）を判定して保存します。
+   */
+  private void storeTT(long hash, int depth, float val, float alphaOrig, float beta) {
+    int index = (int) (hash & TT_MASK);
+    byte flag = 1; // Exact
+    if (val <= alphaOrig) flag = 3; // Upper Bound (これ以上良くならない)
+    else if (val >= beta) flag = 2; // Lower Bound (これ以上悪くならない)
+    
+    ttHash[index] = hash;
+    ttDepth[index] = depth;
+    ttValue[index] = val;
+    ttFlag[index] = flag;
   }
 
   /**
