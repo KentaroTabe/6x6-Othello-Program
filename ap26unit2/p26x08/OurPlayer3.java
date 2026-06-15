@@ -12,7 +12,7 @@ public class OurPlayer3 extends Player {
     private int nodeCount = 0;
     
     // 学習時や状況に応じて制限時間を変更できるようにインスタンス変数化（大会ルールは60秒=60000ms。バッファ込で58秒）
-    private long maxGameTimeMs = 58_000;
+    private long maxGameTimeMs = 75_000;
     
     private static final int TT_SIZE = 1 << 20; 
     private static final int TT_MASK = TT_SIZE - 1;

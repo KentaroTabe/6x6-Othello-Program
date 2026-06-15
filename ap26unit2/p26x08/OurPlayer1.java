@@ -11,7 +11,7 @@ public class OurPlayer1 extends Player {
     private long currentMoveStartTime;
     private long currentMoveTimeLimit;
     private int nodeCount = 0;
-    private static final long MAX_GAME_TIME_MS = 58_000;
+    private static final long MAX_GAME_TIME_MS = 75_000;
     
     private static final long[][] ZOBRIST = new long[Board.LENGTH][2];
     static {
