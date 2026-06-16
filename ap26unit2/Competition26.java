@@ -57,7 +57,7 @@ public class Competition26 {
                     new p26x08.DynamicPlayer(color),
 
                     // ベースライン
-                    new p26x08.OurPlayer1(color),
+                    new p26x08.DynamicPlayer2(color),
                     new p26x08.OurPlayer2(color),
                     new p26x08.OurPlayer3(color),
 

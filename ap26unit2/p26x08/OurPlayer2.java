@@ -11,15 +11,15 @@ public class OurPlayer2 extends Player {
     private long currentMoveTimeLimit;
     private int nodeCount = 0;
     
-    // 学習時や状況に応じて制限時間を変更できるようにインスタンス変数化（大会ルールは60秒=60000ms。バッファ込で58秒）
-    private long maxGameTimeMs = 70_000;
+    // 本番環境用の固定制限時間 (バッファ込み)
+    private static final long MAX_GAME_TIME_MS = 70_000;
     
     private static final long[][] ZOBRIST = new long[Board.LENGTH][2];
     static {
         Random rnd = new Random(2026);
         for (int i = 0; i < Board.LENGTH; i++) {
-            ZOBRIST[i][0] = rnd.nextLong(); 
-            ZOBRIST[i][1] = rnd.nextLong(); 
+            ZOBRIST[i][0] = rnd.nextLong(); // 黒石用乱数
+            ZOBRIST[i][1] = rnd.nextLong(); // 白石用乱数
         }
     }
     
@@ -33,19 +33,10 @@ public class OurPlayer2 extends Player {
 
     private static class TimeoutException extends Exception {}
 
+    // 本番環境用にコンストラクタを統合・簡略化
     public OurPlayer2(Color color) {
-        this(color, new OurEval2(), 70_000); 
-    }
-
-    public OurPlayer2(Color color, OurEval2 eval) {
-        this(color, eval, 70_000); 
-    }
-
-    // 進化戦略の高速学習用（早指し）コンストラクタ
-    public OurPlayer2(Color color, OurEval2 eval, long maxGameTimeMs) {
         super("our2", color); 
-        this.eval = eval;
-        this.maxGameTimeMs = maxGameTimeMs;
+        this.eval = new OurEval2();
     }
 
     @Override
@@ -71,39 +62,34 @@ public class OurPlayer2 extends Player {
             if (board.get(k) == Color.NONE) emptyCount++;
         }
         
-        long timeLeft = maxGameTimeMs - totalConsumedTime;
-        if (timeLeft < 500) timeLeft = 500; 
+        long timeLeft = Math.max(500, MAX_GAME_TIME_MS - totalConsumedTime);
 
+        // --- isEndgame 変数を復活 ---
         boolean isEndgame = (emptyCount <= 14);
         
-        // 持ち時間を限界まで使うアグレッシブな時間配分
         if (isEndgame) {
-            // 終盤は残り時間をギリギリまで使う
-            currentMoveTimeLimit = timeLeft - (maxGameTimeMs < 10000 ? 50 : 100); 
+            // 終盤: 通信バッファ(100ms)を残して残り時間を使い切る
+            currentMoveTimeLimit = Math.max(100, timeLeft - 100); 
         } else {
-            // 残り手番数の見積もり
+            // 序盤・中盤: 残り手番で均等割りした1.5倍を目標時間とする
             int myRemainingTurns = Math.max(1, emptyCount / 2);
+            long targetTime = (long) ((timeLeft * 1.5) / myRemainingTurns);
             
-            // 均等割りではなく、1.5倍の係数をかけて深読みを優先する（時間を前借りするイメージ）
-            currentMoveTimeLimit = (long) ((timeLeft / (double) myRemainingTurns) * 1.5);
-            
-            // ただし、1手で残り時間の40%以上を使わないようセーフティをかける
+            // 上限を残り時間の40%、下限を最低保証時間とする
             long maxAllowed = (long) (timeLeft * 0.4); 
-            if (currentMoveTimeLimit > maxAllowed) {
-                currentMoveTimeLimit = maxAllowed;
-            }
+            long minGuaranteed = Math.min(1500, timeLeft - 500);
             
-            // 制限時間が長ければ最低保証時間を設定
-            if (maxGameTimeMs >= 50000 && currentMoveTimeLimit < 1500) {
-                currentMoveTimeLimit = Math.min(1500, timeLeft - 500);
-            }
+            currentMoveTimeLimit = Math.max(minGuaranteed, Math.min(targetTime, maxAllowed));
         }
 
         Board searchBoard = getColor() == Color.BLACK ? board.clone() : board.flipped();
         List<Move> searchMoves = new ArrayList<>(searchBoard.findLegalMoves(Color.BLACK));
         
         Move bestMove = searchMoves.get(0).colored(getColor());
-        int maxDepth = 64;
+        int maxDepth = 36; // 最大深さを36に最適化
+
+        // 初期盤面のルートハッシュを計算 (探索開始時は常に黒番なので true)
+        long rootHash = getInitialHash(searchBoard, true);
 
         for (int depth = 1; depth <= maxDepth; depth++) {
             try {
@@ -116,7 +102,10 @@ public class OurPlayer2 extends Player {
 
                 for (Move move : searchMoves) {
                     Board nextBoard = searchBoard.placed(move);
-                    float val = minSearch(nextBoard, alpha, beta, depth - 1);
+                    // 置いた石・ひっくり返った石の差分をXORして次のハッシュを計算
+                    long nextHash = updateHash(rootHash, searchBoard, nextBoard);
+                    
+                    float val = minSearch(nextBoard, nextHash, alpha, beta, depth - 1);
                     if (val > alpha) {
                         alpha = val;
                         currentBestSearchMove = move;
@@ -127,6 +116,7 @@ public class OurPlayer2 extends Player {
                     bestMove = currentBestSearchMove.colored(getColor());
                 }
                 
+                // isEndgame による早期ブレイクが正常に機能します
                 if (isEndgame && (alpha >= 100000.0f || alpha <= -100000.0f)) {
                     break; 
                 }
@@ -142,11 +132,10 @@ public class OurPlayer2 extends Player {
         return bestMove;
     }
 
-    private float maxSearch(Board board, float alpha, float beta, int depth) throws TimeoutException {
+    private float maxSearch(Board board, long hash, float alpha, float beta, int depth) throws TimeoutException {
         checkTime();
         if (board.isEnd() || depth == 0) return eval.value(board);
 
-        long hash = getHash(board, true);
         int index = (int) (hash & TT_MASK);
         int bestMoveIndex = -1;
 
@@ -164,7 +153,9 @@ public class OurPlayer2 extends Player {
         List<Move> moves = new ArrayList<>(board.findLegalMoves(Color.BLACK));
         if (moves.isEmpty() || moves.get(0).isPass()) {
             Board nextBoard = board.placed(Move.ofPass(Color.BLACK));
-            float val = minSearch(nextBoard, alpha, beta, depth - 1);
+            // パス時のハッシュ更新（手番のXORのみ）
+            long nextHash = hash ^ 0x123456789ABCDEFL;
+            float val = minSearch(nextBoard, nextHash, alpha, beta, depth - 1);
             storeTT(hash, depth, val, alphaOrig, beta, null);
             return val;
         }
@@ -179,7 +170,10 @@ public class OurPlayer2 extends Player {
         Move currentBestMove = null;
         for (Move move : moves) {
             Board nextBoard = board.placed(move);
-            float val = minSearch(nextBoard, alpha, beta, depth - 1);
+            // 差分XORで次のハッシュを計算
+            long nextHash = updateHash(hash, board, nextBoard);
+            
+            float val = minSearch(nextBoard, nextHash, alpha, beta, depth - 1);
             if (val > bestVal) {
                 bestVal = val;
                 currentBestMove = move;
@@ -192,11 +186,10 @@ public class OurPlayer2 extends Player {
         return bestVal;
     }
 
-    private float minSearch(Board board, float alpha, float beta, int depth) throws TimeoutException {
+    private float minSearch(Board board, long hash, float alpha, float beta, int depth) throws TimeoutException {
         checkTime();
         if (board.isEnd() || depth == 0) return eval.value(board);
 
-        long hash = getHash(board, false);
         int index = (int) (hash & TT_MASK);
         int bestMoveIndex = -1;
 
@@ -214,7 +207,9 @@ public class OurPlayer2 extends Player {
         List<Move> moves = new ArrayList<>(board.findLegalMoves(Color.WHITE));
         if (moves.isEmpty() || moves.get(0).isPass()) {
             Board nextBoard = board.placed(Move.ofPass(Color.WHITE));
-            float val = maxSearch(nextBoard, alpha, beta, depth - 1);
+            // パス時のハッシュ更新（手番のXORのみ）
+            long nextHash = hash ^ 0x123456789ABCDEFL;
+            float val = maxSearch(nextBoard, nextHash, alpha, beta, depth - 1);
             storeTT(hash, depth, val, alpha, betaOrig, null);
             return val;
         }
@@ -229,7 +224,10 @@ public class OurPlayer2 extends Player {
         Move currentBestMove = null;
         for (Move move : moves) {
             Board nextBoard = board.placed(move);
-            float val = maxSearch(nextBoard, alpha, beta, depth - 1);
+            // 差分XORで次のハッシュを計算
+            long nextHash = updateHash(hash, board, nextBoard);
+            
+            float val = maxSearch(nextBoard, nextHash, alpha, beta, depth - 1);
             if (val < bestVal) {
                 bestVal = val;
                 currentBestMove = move;
@@ -267,7 +265,8 @@ public class OurPlayer2 extends Player {
         ttMove[index] = (bestMove != null) ? bestMove.getIndex() : -1;
     }
 
-    private long getHash(Board board, boolean isBlackTurn) {
+    // 各探索の開始時に1回だけ呼ばれる、初期ハッシュ生成用関数
+    private long getInitialHash(Board board, boolean isBlackTurn) {
         long hash = 0;
         for (int i = 0; i < Board.LENGTH; i++) {
             Color c = board.get(i);
@@ -275,6 +274,31 @@ public class OurPlayer2 extends Player {
             else if (c == Color.WHITE) hash ^= ZOBRIST[i][1];
         }
         if (!isBlackTurn) hash ^= 0x123456789ABCDEFL;
+        return hash;
+    }
+
+    // --- Zobrist Hash を差分更新（XOR）するメソッド ---
+    private long updateHash(long currentHash, Board before, Board after) {
+        long hash = currentHash;
+        
+        // 手番の入れ替え（常にビット反転）
+        hash ^= 0x123456789ABCDEFL;
+        
+        // 変化があったマス（置いたマス ＋ ひっくり返ったマス）だけを抽出してXOR
+        for (int i = 0; i < Board.LENGTH; i++) {
+            Color cBefore = before.get(i);
+            Color cAfter = after.get(i);
+            
+            if (cBefore != cAfter) {
+                // 1. 古い状態の石のハッシュを消去 (XOR)
+                if (cBefore == Color.BLACK) hash ^= ZOBRIST[i][0];
+                else if (cBefore == Color.WHITE) hash ^= ZOBRIST[i][1];
+                
+                // 2. 新しい状態の石のハッシュを反映 (XOR)
+                if (cAfter == Color.BLACK) hash ^= ZOBRIST[i][0];
+                else if (cAfter == Color.WHITE) hash ^= ZOBRIST[i][1];
+            }
+        }
         return hash;
     }
 
